@@ -1,5 +1,5 @@
 from pydantic import BaseModel, EmailStr, Field
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 from bson import ObjectId
 
@@ -48,11 +48,17 @@ class UserResponse(UserBase):
     """Schema for user response"""
     id: str
     is_active: bool
+    watchlist: List[str] = []
     created_at: datetime
     updated_at: datetime
-    
+
     class Config:
         from_attributes = True
+
+
+class WatchlistResponse(BaseModel):
+    """Schema for watchlist response"""
+    watchlist: List[str]
 
 
 class Token(BaseModel):

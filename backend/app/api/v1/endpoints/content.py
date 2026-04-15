@@ -77,19 +77,34 @@ async def get_content(
 async def list_content(
     content_type: ContentType = Query(None),
     genre: str = Query(None),
+    search: str = Query(None, description="Search by title or description"),
+    actor: str = Query(None, description="Filter by actor name"),
+    director: str = Query(None, description="Filter by director name"),
     skip: int = Query(0, ge=0),
     limit: int = Query(10, ge=1, le=100),
     db: AsyncDatabase = Depends(get_mongodb),
 ):
-    """List content with filters"""
+    """List content with filters. Use 'search' to find by title or description."""
     filter_query = {}
-    
+
     if content_type:
         filter_query["content_type"] = content_type.value
-    
+
     if genre:
         filter_query["genres"] = {"$in": [genre]}
-    
+
+    if search:
+        filter_query["$or"] = [
+            {"title": {"$regex": search, "$options": "i"}},
+            {"description": {"$regex": search, "$options": "i"}},
+        ]
+
+    if actor:
+        filter_query["cast"] = {"$elemMatch": {"$regex": actor, "$options": "i"}}
+
+    if director:
+        filter_query["directors"] = {"$elemMatch": {"$regex": director, "$options": "i"}}
+
     content_list = await db["content"].find(filter_query).skip(skip).limit(limit).to_list(limit)
     
     return [

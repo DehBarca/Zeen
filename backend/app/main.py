@@ -14,8 +14,16 @@ from app.core.database import (
     disconnect_from_cassandra,
     connect_to_dgraph,
     connect_to_chromadb,
+    get_mongodb,
 )
 from app.api.v1.api import api_router
+
+
+async def create_indexes():
+    """Create MongoDB indexes on startup"""
+    db = await get_mongodb()
+    await db["content"].create_index([("title", "text"), ("description", "text")])
+    print("✓ MongoDB indexes created")
 
 
 # Lifespan context manager for startup and shutdown events
@@ -28,6 +36,7 @@ async def lifespan(app: FastAPI):
     await connect_to_cassandra()
     await connect_to_dgraph()
     await connect_to_chromadb()
+    await create_indexes()
     print("✓ All databases connected")
     
     yield

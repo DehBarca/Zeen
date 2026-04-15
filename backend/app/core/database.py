@@ -1,4 +1,4 @@
-from motor.motor_asyncio import AsyncClient, AsyncDatabase
+from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from cassandra.cluster import Cluster
 from cassandra.auth import PlainTextAuthProvider
 import pydgraph
@@ -8,14 +8,14 @@ from typing import Optional
 
 
 # MongoDB Connection
-mongodb_client: Optional[AsyncClient] = None
-mongodb_db: Optional[AsyncDatabase] = None
+mongodb_client: Optional[AsyncIOMotorClient] = None
+mongodb_db: Optional[AsyncIOMotorDatabase] = None
 
 
 async def connect_to_mongodb():
     """Connect to MongoDB"""
     global mongodb_client, mongodb_db
-    mongodb_client = AsyncClient(settings.DATABASE_URL)
+    mongodb_client = AsyncIOMotorClient(settings.DATABASE_URL)
     mongodb_db = mongodb_client["zeen_db"]
     print("Connected to MongoDB")
 
@@ -28,7 +28,7 @@ async def disconnect_from_mongodb():
         print("Disconnected from MongoDB")
 
 
-async def get_mongodb() -> AsyncDatabase:
+async def get_mongodb() -> AsyncIOMotorDatabase:
     """Get MongoDB database instance"""
     return mongodb_db
 

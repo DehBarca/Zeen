@@ -2,7 +2,7 @@
 User endpoints
 """
 from fastapi import APIRouter, HTTPException, Depends, status
-from motor.motor_asyncio import AsyncDatabase
+from motor.motor_asyncio import AsyncIOMotorDatabase as AsyncDatabase
 from bson import ObjectId
 from datetime import datetime
 

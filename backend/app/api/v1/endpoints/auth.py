@@ -4,7 +4,7 @@ Authentication endpoints
 from fastapi import APIRouter, HTTPException, Depends, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from datetime import timedelta
-from motor.motor_asyncio import AsyncDatabase
+from motor.motor_asyncio import AsyncIOMotorDatabase as AsyncDatabase
 from bson import ObjectId
 
 from app.core.security import (

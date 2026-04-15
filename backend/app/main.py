@@ -23,6 +23,10 @@ async def create_indexes():
     """Create MongoDB indexes on startup"""
     db = await get_mongodb()
     await db["content"].create_index([("title", "text"), ("description", "text")])
+    # Unique compound index: one rating per user per content
+    await db["ratings"].create_index(
+        [("user_id", 1), ("content_id", 1)], unique=True
+    )
     print("✓ MongoDB indexes created")
 
 

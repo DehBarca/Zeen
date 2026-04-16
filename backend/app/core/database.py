@@ -1,19 +1,18 @@
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from cassandra.cluster import Cluster
 from cassandra.auth import PlainTextAuthProvider
-import pydgraph
 import chromadb
 from app.core.config import settings
 from typing import Optional
 
 
-# MongoDB Connection
+# ── MongoDB ─────────────────────────────────────────────────────────
+
 mongodb_client: Optional[AsyncIOMotorClient] = None
 mongodb_db: Optional[AsyncIOMotorDatabase] = None
 
 
 async def connect_to_mongodb():
-    """Connect to MongoDB"""
     global mongodb_client, mongodb_db
     mongodb_client = AsyncIOMotorClient(settings.DATABASE_URL)
     mongodb_db = mongodb_client["zeen_db"]
@@ -21,7 +20,6 @@ async def connect_to_mongodb():
 
 
 async def disconnect_from_mongodb():
-    """Disconnect from MongoDB"""
     global mongodb_client
     if mongodb_client:
         mongodb_client.close()
@@ -29,38 +27,77 @@ async def disconnect_from_mongodb():
 
 
 async def get_mongodb() -> AsyncIOMotorDatabase:
-    """Get MongoDB database instance"""
     return mongodb_db
 
 
-# Cassandra Connection
+# ── Cassandra ───────────────────────────────────────────────────────
+
 cassandra_cluster: Optional[Cluster] = None
 cassandra_session = None
 
+CASSANDRA_TABLES = [
+    # FR-06: Playback events (play, pause, resume, complete)
+    """
+    CREATE TABLE IF NOT EXISTS playback_events (
+        user_id text,
+        content_id text,
+        event_type text,
+        position_seconds int,
+        event_time timestamp,
+        PRIMARY KEY ((user_id, content_id), event_time)
+    ) WITH CLUSTERING ORDER BY (event_time DESC)
+    """,
+    # FR-07: Watch history per user, ordered by recency
+    """
+    CREATE TABLE IF NOT EXISTS watch_history (
+        user_id text,
+        watched_at timestamp,
+        content_id text,
+        progress_seconds int,
+        duration_seconds int,
+        completed boolean,
+        PRIMARY KEY (user_id, watched_at)
+    ) WITH CLUSTERING ORDER BY (watched_at DESC)
+    """,
+    # FR-15 / FR-30: Activity log for analytics (partitioned by date)
+    """
+    CREATE TABLE IF NOT EXISTS user_activity (
+        activity_date text,
+        event_time timestamp,
+        user_id text,
+        action text,
+        content_id text,
+        details text,
+        PRIMARY KEY (activity_date, event_time)
+    ) WITH CLUSTERING ORDER BY (event_time DESC)
+    """,
+]
+
 
 async def connect_to_cassandra():
-    """Connect to Cassandra"""
     global cassandra_cluster, cassandra_session
     try:
         cassandra_cluster = Cluster(
             contact_points=settings.CASSANDRA_HOSTS,
-            port=settings.CASSANDRA_PORT
+            port=settings.CASSANDRA_PORT,
         )
         cassandra_session = cassandra_cluster.connect()
-        
-        # Create keyspace if it doesn't exist
+
         cassandra_session.execute(f"""
             CREATE KEYSPACE IF NOT EXISTS {settings.CASSANDRA_KEYSPACE}
             WITH REPLICATION = {{'class': 'SimpleStrategy', 'replication_factor': 1}}
         """)
         cassandra_session.set_keyspace(settings.CASSANDRA_KEYSPACE)
-        print("Connected to Cassandra")
+
+        for ddl in CASSANDRA_TABLES:
+            cassandra_session.execute(ddl)
+
+        print("Connected to Cassandra (tables ready)")
     except Exception as e:
         print(f"Error connecting to Cassandra: {e}")
 
 
 async def disconnect_from_cassandra():
-    """Disconnect from Cassandra"""
     global cassandra_cluster
     if cassandra_cluster:
         cassandra_cluster.shutdown()
@@ -68,30 +105,27 @@ async def disconnect_from_cassandra():
 
 
 async def get_cassandra_session():
-    """Get Cassandra session"""
     return cassandra_session
 
 
-# Dgraph Connection
-dgraph_client: Optional[pydgraph.DgraphClientStub] = None
-
+# ── Dgraph ──────────────────────────────────────────────────────────
+# Dgraph uses HTTP via dgraph_client.py helper; no persistent object needed.
 
 async def connect_to_dgraph():
-    """Connect to Dgraph"""
-    global dgraph_client
+    """Apply Dgraph schema on startup."""
     try:
-        # Dgraph connection (simplified - uses gRPC in production)
-        print(f"Dgraph configured at {settings.DGRAPH_URL}")
+        from app.core.dgraph_client import apply_schema
+        await apply_schema()
     except Exception as e:
         print(f"Error connecting to Dgraph: {e}")
 
 
-# ChromaDB Connection
+# ── ChromaDB ────────────────────────────────────────────────────────
+
 chroma_client: Optional[chromadb.HttpClient] = None
 
 
 async def connect_to_chromadb():
-    """Connect to ChromaDB"""
     global chroma_client
     try:
         chroma_client = chromadb.HttpClient(host="chromadb", port=8000)
@@ -101,5 +135,4 @@ async def connect_to_chromadb():
 
 
 async def get_chromadb_client():
-    """Get ChromaDB client"""
     return chroma_client

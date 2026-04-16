@@ -4,16 +4,16 @@ from datetime import datetime
 
 
 class RatingCreate(BaseModel):
-    """Schema for creating or updating a rating"""
-    score: float = Field(..., ge=1, le=10, description="Rating score from 1 to 10")
+    score: float = Field(..., ge=1, le=5, description="Rating score from 1 to 5 stars")
+    review: Optional[str] = Field(None, max_length=2000, description="Optional written review")
 
 
 class RatingResponse(BaseModel):
-    """Schema for rating response"""
     id: str
     user_id: str
     content_id: str
     score: float
+    review: Optional[str] = None
     created_at: datetime
 
     class Config:
@@ -21,8 +21,8 @@ class RatingResponse(BaseModel):
 
 
 class ContentRatingSummary(BaseModel):
-    """Schema for content rating summary"""
     content_id: str
     average_score: float
     total_ratings: int
     user_score: Optional[float] = None
+    user_review: Optional[str] = None

@@ -189,7 +189,7 @@ check "Filter by type (movie)" "$R" "200"
 R=$(curl -s -o /dev/null -w "%{http_code}" "$BASE/content/?genre=Sci-Fi")
 check "Filter by genre (Sci-Fi)" "$R" "200"
 
-R=$(curl -s -o /dev/null -w "%{http_code}" "$BASE/content/?search=batman")
+R=$(curl -s -o /dev/null -w "%{http_code}" "$BASE/content/?query=batman")
 check "Search by keyword (batman)" "$R" "200"
 
 R=$(curl -s -o /dev/null -w "%{http_code}" "$BASE/content/?actor=McConaughey")

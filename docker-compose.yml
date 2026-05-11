@@ -105,6 +105,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: zeen-backend
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     ports:
       - "8000:8000"
     environment:
@@ -128,7 +129,7 @@ services:
     networks:
       - zeen-network
     volumes:
-      - ./backend/app:/app/app
+      - ./backend:/app
     restart: unless-stopped
 
   # React Frontend
@@ -147,7 +148,8 @@ services:
     networks:
       - zeen-network
     volumes:
-      - ./frontend/src:/app/src
+      - ./frontend:/app
+      - /app/node_modules
     restart: unless-stopped
 
 volumes:

@@ -7,6 +7,9 @@ export interface User {
   first_name?: string
   last_name?: string
   is_active: boolean
+  role?: 'user' | 'admin'
+  watchlist?: string[]
+  profiles?: Array<Record<string, unknown>>
   created_at: string
   updated_at: string
 }

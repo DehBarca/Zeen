@@ -12,6 +12,7 @@ protobuf==3.20.3
 
 # Vector Search
 chromadb>=0.4.0,<1.0
+sentence-transformers==3.0.1
 
 # Authentication & Security
 python-jose[cryptography]==3.3.0

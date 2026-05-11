@@ -36,6 +36,13 @@ export interface ContentCreate {
 export interface ContentListParams {
   content_type?: ContentType
   genre?: string
+  query?: string
+  actor?: string
+  director?: string
+  year?: number
+  min_rating?: number
+  sort_by?: 'rating' | 'title' | 'release_date' | 'created_at' | 'duration_minutes'
+  sort_order?: 'asc' | 'desc'
   skip?: number
   limit?: number
 }

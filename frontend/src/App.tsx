@@ -3,6 +3,9 @@ import { useAuth } from './hooks/useAuth'
 import { LoginPage } from './pages/LoginPage'
 import { RegisterPage } from './pages/RegisterPage'
 import { HomePage } from './pages/HomePage'
+import { AdminPage } from './pages/AdminPage'
+import { ProfilePage } from './pages/ProfilePage'
+import { ContentFormPage } from './pages/ContentFormPage'
 import './App.css'
 
 function App() {
@@ -30,6 +33,22 @@ function App() {
       <Route
         path="/"
         element={isAuthenticated ? <HomePage /> : <Navigate to="/login" />}
+      />
+      <Route
+        path="/profile"
+        element={isAuthenticated ? <ProfilePage /> : <Navigate to="/login" />}
+      />
+      <Route
+        path="/admin"
+        element={isAuthenticated ? <AdminPage /> : <Navigate to="/login" />}
+      />
+      <Route
+        path="/admin/content/new"
+        element={isAuthenticated ? <ContentFormPage /> : <Navigate to="/login" />}
+      />
+      <Route
+        path="/admin/content/:id/edit"
+        element={isAuthenticated ? <ContentFormPage /> : <Navigate to="/login" />}
       />
       <Route path="*" element={<Navigate to="/" />} />
     </Routes>

@@ -8,8 +8,14 @@ from bson import ObjectId
 from datetime import datetime
 from typing import List, Optional
 from enum import Enum
+import re
 
 from app.core.database import get_mongodb
+from app.core.semantic_search import (
+    delete_content_embedding,
+    semantic_search_content_ids,
+    upsert_content_embedding,
+)
 from app.schemas.content import ContentCreate, ContentUpdate, ContentResponse, ContentType
 from app.schemas.user import UserResponse, UserRole
 from app.api.v1.endpoints.auth import get_current_user, require_admin
@@ -63,6 +69,11 @@ async def create_content(
     except Exception:
         pass
 
+    try:
+        await upsert_content_embedding(mongo_id, new_content)
+    except Exception:
+        pass
+
     return ContentResponse(
         id=mongo_id,
         **{k: v for k, v in new_content.items() if k != "_id"},
@@ -92,6 +103,10 @@ async def batch_create_content(
             await create_content_node(mongo_id, item.title, item.genres, item.cast, item.directors)
         except Exception:
             pass
+        try:
+            await upsert_content_embedding(mongo_id, doc)
+        except Exception:
+            pass
         results.append(ContentResponse(id=mongo_id, **{k: v for k, v in doc.items() if k != "_id"}))
     return results
 
@@ -100,7 +115,7 @@ async def batch_create_content(
 async def list_content(
     content_type: ContentType = Query(None),
     genre: str = Query(None),
-    search: str = Query(None, description="Search by title or description"),
+    query: str = Query(None, description="Semantic search across title, description, genre, cast, or director"),
     actor: str = Query(None, description="Filter by actor name"),
     director: str = Query(None, description="Filter by director name"),
     year: int = Query(None, description="FR-18: Filter by release year"),
@@ -114,15 +129,20 @@ async def list_content(
     """FR-04: List content with filters, sorting, and pagination."""
     filter_query = {}
 
+    def _search_matches(term: str):
+        regex = {"$regex": term, "$options": "i"}
+        return [
+            {"title": regex},
+            {"description": regex},
+            {"genres": {"$elemMatch": regex}},
+            {"cast": {"$elemMatch": regex}},
+            {"directors": {"$elemMatch": regex}},
+        ]
+
     if content_type:
         filter_query["content_type"] = content_type.value
     if genre:
         filter_query["genres"] = {"$in": [genre]}
-    if search:
-        filter_query["$or"] = [
-            {"title": {"$regex": search, "$options": "i"}},
-            {"description": {"$regex": search, "$options": "i"}},
-        ]
     if actor:
         filter_query["cast"] = {"$elemMatch": {"$regex": actor, "$options": "i"}}
     if director:
@@ -136,8 +156,46 @@ async def list_content(
         filter_query["rating"] = {"$gte": min_rating}
 
     sort_dir = 1 if sort_order == SortOrder.ASC else -1
-    cursor = db["content"].find(filter_query).sort(sort_by.value, sort_dir).skip(skip).limit(limit)
-    content_list = await cursor.to_list(limit)
+
+    normalized_query = query.strip() if query else ""
+    if normalized_query:
+        target_count = max(skip + limit, 20)
+        semantic_ids = await semantic_search_content_ids(normalized_query, limit=target_count)
+
+        query_terms = [term for term in re.split(r"\s+", normalized_query) if term]
+        regex_filter = dict(filter_query)
+        if query_terms:
+            if len(query_terms) == 1:
+                regex_filter["$or"] = _search_matches(query_terms[0])
+            else:
+                regex_filter["$and"] = [{"$or": _search_matches(term)} for term in query_terms]
+        regex_docs = await db["content"].find(regex_filter).sort(sort_by.value, sort_dir).limit(target_count).to_list(target_count)
+        regex_ids = [str(item["_id"]) for item in regex_docs]
+
+        ordered_ids = []
+        seen_ids = set()
+        for content_id in semantic_ids + regex_ids:
+            if content_id not in seen_ids:
+                seen_ids.add(content_id)
+                ordered_ids.append(content_id)
+
+        if ordered_ids:
+            object_ids = []
+            for content_id in ordered_ids:
+                try:
+                    object_ids.append(ObjectId(content_id))
+                except Exception:
+                    continue
+
+            docs = await db["content"].find({"_id": {"$in": object_ids}, **filter_query}).to_list(len(object_ids))
+            docs_by_id = {str(item["_id"]): item for item in docs}
+            content_list = [docs_by_id[content_id] for content_id in ordered_ids if content_id in docs_by_id]
+        else:
+            content_list = []
+        content_list = content_list[skip: skip + limit]
+    else:
+        cursor = db["content"].find(filter_query).sort(sort_by.value, sort_dir).skip(skip).limit(limit)
+        content_list = await cursor.to_list(limit)
 
     return [
         ContentResponse(id=str(item["_id"]), **{k: v for k, v in item.items() if k != "_id"})
@@ -256,6 +314,10 @@ async def update_content(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Content not found")
 
     content = await db["content"].find_one({"_id": content_obj_id})
+    try:
+        await upsert_content_embedding(str(content_obj_id), content)
+    except Exception:
+        pass
     return ContentResponse(id=str(content["_id"]), **{k: v for k, v in content.items() if k != "_id"})
 
 
@@ -274,3 +336,8 @@ async def delete_content(
     result = await db["content"].delete_one({"_id": content_obj_id})
     if result.deleted_count == 0:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Content not found")
+
+    try:
+        await delete_content_embedding(str(content_obj_id))
+    except Exception:
+        pass

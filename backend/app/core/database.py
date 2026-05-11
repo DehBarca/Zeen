@@ -4,6 +4,7 @@ from cassandra.auth import PlainTextAuthProvider
 import chromadb
 from app.core.config import settings
 from typing import Optional
+from urllib.parse import urlparse
 
 
 # ── MongoDB ─────────────────────────────────────────────────────────
@@ -128,7 +129,10 @@ chroma_client: Optional[chromadb.HttpClient] = None
 async def connect_to_chromadb():
     global chroma_client
     try:
-        chroma_client = chromadb.HttpClient(host="chromadb", port=8000)
+        parsed = urlparse(settings.CHROMADB_URL)
+        host = parsed.hostname or "chromadb"
+        port = parsed.port or 8000
+        chroma_client = chromadb.HttpClient(host=host, port=port)
         print("Connected to ChromaDB")
     except Exception as e:
         print(f"Error connecting to ChromaDB: {e}")

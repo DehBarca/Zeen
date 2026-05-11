@@ -41,6 +41,8 @@ build/
 *.swo
 *~
 .DS_Store
+AGENTS.md
+.claude
 
 # Environment
 .env

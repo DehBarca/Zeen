@@ -116,6 +116,7 @@ async def list_content(
     content_type: ContentType = Query(None),
     genre: str = Query(None),
     query: str = Query(None, description="Semantic search across title, description, genre, cast, or director"),
+    min_similarity: float = Query(0.8, ge=0.0, le=1.0, description="Minimum semantic similarity (0-1) to include results"),
     actor: str = Query(None, description="Filter by actor name"),
     director: str = Query(None, description="Filter by director name"),
     year: int = Query(None, description="FR-18: Filter by release year"),
@@ -160,7 +161,7 @@ async def list_content(
     normalized_query = query.strip() if query else ""
     if normalized_query:
         target_count = max(skip + limit, 20)
-        semantic_ids = await semantic_search_content_ids(normalized_query, limit=target_count)
+        semantic_ids = await semantic_search_content_ids(normalized_query, limit=target_count, min_similarity=min_similarity)
 
         query_terms = [term for term in re.split(r"\s+", normalized_query) if term]
         regex_filter = dict(filter_query)

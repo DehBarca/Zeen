@@ -116,7 +116,7 @@ async def delete_content_embedding(content_id: str) -> None:
     collection.delete(ids=[content_id])
 
 
-async def semantic_search_content_ids(query: str, limit: int = 20) -> list[str]:
+async def semantic_search_content_ids(query: str, limit: int = 20, min_similarity: float = 0.8) -> list[str]:
     collection = await _get_collection()
     if collection is None:
         return []
@@ -128,6 +128,39 @@ async def semantic_search_content_ids(query: str, limit: int = 20) -> list[str]:
     embedding = await _embed_text(normalized_query)
     result = collection.query(query_embeddings=[embedding], n_results=limit)
     ids = result.get("ids") or []
+    distances = result.get("distances") or []
+
     if not ids:
         return []
-    return [item for item in ids[0] if item]
+
+    # Chromadb returns distances/scores in different formats depending on config.
+    # distances[0] is a list of floats aligned with ids[0]. We apply a heuristic to
+    # convert values to a similarity score in [0,1] where higher is more similar.
+    raw_scores = distances[0] if distances and len(distances) > 0 else []
+
+    def to_similarity(v: float) -> float:
+        # If values appear to be already in [0,1] and larger==more similar, use directly.
+        if 0.0 <= v <= 1.0:
+            return v
+        # If values appear to be distance in [0,2] (cosine distance), convert: sim = 1 - (d/2)
+        if v >= 0.0 and v <= 2.0:
+            return max(0.0, min(1.0, 1.0 - (v / 2.0)))
+        # Fallback: try sigmoid-like clamp
+        return max(0.0, min(1.0, 1.0 - v))
+
+    results: list[str] = []
+    for idx, cid in enumerate(ids[0]):
+        if not cid:
+            continue
+        score = 1.0
+        if idx < len(raw_scores):
+            try:
+                score = float(raw_scores[idx])
+            except Exception:
+                score = 1.0
+            score = to_similarity(score)
+
+        if score >= float(min_similarity):
+            results.append(cid)
+
+    return results

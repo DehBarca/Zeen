@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useContentStore } from '../store/contentStore'
+import MovieModal from '../components/MovieModal'
 import { useAuth } from '../hooks/useAuth'
 import { useAuthStore } from '../store/authStore'
 import './HomePage.css'
@@ -8,7 +9,7 @@ import './HomePage.css'
 export function HomePage() {
   const { user } = useAuth()
   const navigate = useNavigate()
-  const { contents, isLoading, listContents } = useContentStore()
+  const { contents, isLoading, listContents, selectedContent, setSelectedContent } = useContentStore()
   const { logout } = useAuthStore()
   const [search, setSearch] = useState('')
   const [contentType, setContentType] = useState<'all' | 'movie' | 'series'>('all')
@@ -85,7 +86,7 @@ export function HomePage() {
         ) : (
           <div className="content-grid">
             {contents.map((content) => (
-              <div key={content.id} className="content-card">
+              <div key={content.id} className="content-card" onClick={() => setSelectedContent(content)} role="button" tabIndex={0}>
                 <div className="content-poster">
                   {content.poster_url ? (
                     <img src={content.poster_url} alt={content.title} />
@@ -105,6 +106,10 @@ export function HomePage() {
           </div>
         )}
       </section>
+
+      {selectedContent && (
+        <MovieModal content={selectedContent} onClose={() => setSelectedContent(null)} />
+      )}
 
       {user.role === 'admin' && (
         <section className="content-section admin-quick-link">

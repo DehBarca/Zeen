@@ -1,25 +1,29 @@
 .home-page {
   min-height: 100vh;
-  background: #1a1a1a;
+  background: transparent; /* uses index background */
   color: white;
 }
 
 .header {
-  background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
-  padding: 2rem;
+  background: linear-gradient(90deg, rgba(127,178,255,0.12), rgba(155,92,255,0.08));
+  padding: 3rem 2rem;
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+  backdrop-filter: blur(6px);
 }
 
 .header-topbar {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
+  align-items: center;
   gap: 1rem;
 }
 
 .header h1 {
   font-size: 3rem;
   margin: 0;
-  margin-bottom: 0.5rem;
+  margin-bottom: 0.25rem;
+  color: white;
+  text-shadow: 0 6px 20px rgba(127,178,255,0.08);
 }
 
 .header p {
@@ -63,21 +67,24 @@
 }
 
 .search-toolbar {
-  margin-top: 1.5rem;
+  margin-top: 1.25rem;
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: 1fr auto;
   gap: 1rem;
+  align-items: center;
 }
 
 .search-input {
   width: 100%;
   padding: 0.95rem 1rem;
-  border: 1px solid rgba(255, 255, 255, 0.15);
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.12);
+  background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.02));
   color: white;
-  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255,255,255,0.04);
+  box-shadow: 0 8px 30px rgba(11,16,32,0.6);
 }
+
+.search-toolbar .filter-pills { justify-self: end; }
 
 .search-input::placeholder {
   color: rgba(255, 255, 255, 0.72);
@@ -117,11 +124,12 @@
 }
 
 .content-card {
-  background: #2a2a2a;
-  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+  border-radius: 12px;
   overflow: hidden;
-  transition: transform 0.3s, box-shadow 0.3s;
+  transition: transform 0.28s cubic-bezier(.2,.9,.2,1), box-shadow 0.28s;
   cursor: pointer;
+  border: 1px solid rgba(127,178,255,0.06);
 }
 
 .content-card.selected {
@@ -134,9 +142,27 @@
 }
 
 .content-card:hover {
-  transform: translateY(-5px);
-  box-shadow: 0 10px 30px rgba(42, 82, 152, 0.5);
+  transform: translateY(-10px) scale(1.02);
+  box-shadow: 0 20px 60px rgba(11,16,32,0.6), 0 6px 20px rgba(127,178,255,0.06);
 }
+
+.content-card .play-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255,255,255,0.95);
+  font-size: 36px;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  background: linear-gradient(180deg, rgba(11,16,32,0.0), rgba(11,16,32,0.45));
+}
+.content-card:hover .play-overlay { opacity: 1; }
+
+.content-poster { position: relative; }
+
+.content-poster img { display: block; }
 
 .content-poster {
   width: 100%;
@@ -174,10 +200,10 @@
 
 .content-info h3 {
   margin: 0 0 0.5rem 0;
-  font-size: 1rem;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: white;
+  text-shadow: 0 8px 30px rgba(127,178,255,0.04);
 }
 
 .content-type {

@@ -116,7 +116,7 @@ async def list_content(
     content_type: ContentType = Query(None),
     genre: str = Query(None),
     query: str = Query(None, description="Semantic search across title, description, genre, cast, or director"),
-    min_similarity: float = Query(0.8, ge=0.0, le=1.0, description="Minimum semantic similarity (0-1) to include results"),
+    min_similarity: float = Query(0.3, ge=0.0, le=1.0, description="Minimum semantic similarity (0-1) to include results"),
     actor: str = Query(None, description="Filter by actor name"),
     director: str = Query(None, description="Filter by director name"),
     year: int = Query(None, description="FR-18: Filter by release year"),
@@ -129,16 +129,6 @@ async def list_content(
 ):
     """FR-04: List content with filters, sorting, and pagination."""
     filter_query = {}
-
-    def _search_matches(term: str):
-        regex = {"$regex": term, "$options": "i"}
-        return [
-            {"title": regex},
-            {"description": regex},
-            {"genres": {"$elemMatch": regex}},
-            {"cast": {"$elemMatch": regex}},
-            {"directors": {"$elemMatch": regex}},
-        ]
 
     if content_type:
         filter_query["content_type"] = content_type.value
@@ -160,25 +150,36 @@ async def list_content(
 
     normalized_query = query.strip() if query else ""
     if normalized_query:
-        target_count = max(skip + limit, 20)
-        semantic_ids = await semantic_search_content_ids(normalized_query, limit=target_count, min_similarity=min_similarity)
+        target_count = skip + limit
 
-        query_terms = [term for term in re.split(r"\s+", normalized_query) if term]
-        regex_filter = dict(filter_query)
-        if query_terms:
-            if len(query_terms) == 1:
-                regex_filter["$or"] = _search_matches(query_terms[0])
-            else:
-                regex_filter["$and"] = [{"$or": _search_matches(term)} for term in query_terms]
+        # 1) Substring/regex matches first — covers partial words like "Leo" → Leonardo
+        escaped = re.escape(normalized_query)
+        regex = {"$regex": escaped, "$options": "i"}
+        regex_filter = {
+            **filter_query,
+            "$or": [
+                {"title": regex},
+                {"description": regex},
+                {"genres": {"$elemMatch": regex}},
+                {"cast": {"$elemMatch": regex}},
+                {"directors": {"$elemMatch": regex}},
+            ],
+        }
         regex_docs = await db["content"].find(regex_filter).sort(sort_by.value, sort_dir).limit(target_count).to_list(target_count)
         regex_ids = [str(item["_id"]) for item in regex_docs]
 
-        ordered_ids = []
-        seen_ids = set()
-        for content_id in semantic_ids + regex_ids:
-            if content_id not in seen_ids:
-                seen_ids.add(content_id)
-                ordered_ids.append(content_id)
+        # 2) Semantic matches fill the rest (only if we still need more)
+        semantic_ids: list[str] = []
+        if len(regex_ids) < target_count:
+            semantic_ids = await semantic_search_content_ids(normalized_query, limit=target_count, min_similarity=min_similarity)
+
+        # 3) Merge preserving order, dedup, then hydrate from Mongo
+        ordered_ids: list[str] = []
+        seen: set[str] = set()
+        for cid in regex_ids + semantic_ids:
+            if cid not in seen:
+                seen.add(cid)
+                ordered_ids.append(cid)
 
         if ordered_ids:
             object_ids = []
@@ -187,10 +188,9 @@ async def list_content(
                     object_ids.append(ObjectId(content_id))
                 except Exception:
                     continue
-
             docs = await db["content"].find({"_id": {"$in": object_ids}, **filter_query}).to_list(len(object_ids))
             docs_by_id = {str(item["_id"]): item for item in docs}
-            content_list = [docs_by_id[content_id] for content_id in ordered_ids if content_id in docs_by_id]
+            content_list = [docs_by_id[cid] for cid in ordered_ids if cid in docs_by_id]
         else:
             content_list = []
         content_list = content_list[skip: skip + limit]

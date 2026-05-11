@@ -15,9 +15,10 @@ export function HomePage() {
   const [contentType, setContentType] = useState<'all' | 'movie' | 'series'>('all')
 
   useEffect(() => {
+    const trimmed = search.trim()
     listContents({
-      limit: 24,
-      query: search.trim() || undefined,
+      limit: trimmed ? 3 : 24,
+      query: trimmed || undefined,
       content_type: contentType === 'all' ? undefined : contentType,
       sort_by: 'created_at',
       sort_order: 'desc',

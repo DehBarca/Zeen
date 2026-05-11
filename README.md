@@ -108,8 +108,8 @@ docker-compose up --build
 
 Once running, access:
 - **Web App**: http://localhost:5173
-- **API Docs**: http://localhost:8000/api/v1/docs
-- **API ReDoc**: http://localhost:8000/api/v1/redoc
+- **API Docs**: http://localhost:8000/docs
+- **API ReDoc**: http://localhost:8000/redoc
 
 #### Verifying Services
 

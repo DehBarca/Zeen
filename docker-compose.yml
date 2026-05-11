@@ -82,7 +82,7 @@ services:
 
   # ChromaDB - Vector database for semantic search
   chromadb:
-    image: ghcr.io/chroma-core/chroma:latest
+    image: ghcr.io/chroma-core/chroma:0.6.3
     container_name: zeen-chromadb
     ports:
       - "8001:8000"

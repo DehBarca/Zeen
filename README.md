@@ -2,482 +2,386 @@
 
 **See it. Feel it. Keep it Zeen**
 
-A modern streaming platform prototype built with **React** and **FastAPI**, demonstrating the integration of multiple NoSQL databases for user management, content catalog, recommendations, and real-time event tracking.
+Zeen is a modern streaming platform prototype built with **React**, **TypeScript**, and **FastAPI**. It demonstrates how a media application can combine multiple NoSQL databases to handle users, content metadata, analytics, recommendations, and semantic search in one system.
 
-## 📋 Project Overview
+## What the app does
 
-Zeen is a full-featured streaming platform that showcases how different NoSQL databases can work together in a single system:
+- Browse movies, series, and episodes from a catalog
+- Search content by title, description, genres, cast, and directors
+- Open a detail modal with banner, poster, description, duration, categories, rating, and play action
+- Authenticate users with JWT
+- Separate admin and regular-user flows
+- Prepare the backend for analytics and recommendation workflows
 
-- **MongoDB**: User profiles, show metadata, and episode details
-- **Cassandra**: High-throughput watch history and real-time analytics
-- **Dgraph**: Graph-based recommendations and relationships
-- **ChromaDB**: Semantic search for natural language queries
+## Database roles
 
-### Core Features
+Zeen uses each database for a specific part of the product:
 
-✅ **User Management**: Registration, login, profile management with JWT auth  
-✅ **Content Catalog**: Browse movies, series, and episodes with filters  
-✅ **Database Integration**: MongoDB for documents, Cassandra for events, Dgraph for relationships  
-✅ **Vector Search**: ChromaDB integration for semantic search capabilities  
-✅ **REST API**: Comprehensive OpenAPI documentation with Swagger UI  
-✅ **Async Architecture**: High-performance async/await throughout backend  
-✅ **Development Environment**: Docker Compose with all services preconfigured  
-✅ **Type Safety**: Full TypeScript frontend and Pydantic-validated backend  
+- **MongoDB** stores the main application documents: users, content catalog entries, movie metadata, profiles, and update timestamps.
+- **Cassandra** is reserved for high-volume watch history and event-style data, where fast writes and time-based queries matter.
+- **Dgraph** models relationships for recommendations, such as which content a user watches, preferred genres, actors, and directors.
+- **ChromaDB** stores local embeddings for semantic search so users can search with natural language and still find relevant titles.
 
-### Planned Features 🗺️
+## Database keys, fields, and where they are used
 
-🔜 Watch history tracking (Cassandra)  
-🔜 Personalized recommendations (Dgraph graph relationships)  
-🔜 Semantic search across content (ChromaDB embeddings)  
-🔜 Real-time analytics dashboard  
-🔜 Admin panel for content management  
+### MongoDB
 
-## � Quick Start
+MongoDB stores the main documents for the application.
 
-Get the app running in 3 commands:
+**Why MongoDB for this data**
+
+- User profiles and content metadata are document-shaped and change over time, so a schema-flexible document store fits better than a rigid relational model.
+- The app frequently reads and updates whole user/content documents, which is a common MongoDB strength.
+- Content cards, profile data, and admin edits benefit from keeping nested arrays like `genres`, `cast`, `directors`, `watchlist`, and `profiles` inside the document.
+
+**Collections and fields**
+
+- `users`: `_id`, `email`, `username`, `hashed_password`, `first_name`, `last_name`, `is_active`, `role`, `watchlist`, `profiles`, `created_at`, `updated_at`
+- `content`: `_id`, `title`, `description`, `content_type`, `duration_minutes`, `release_date`, `poster_url`, `banner_url`, `rating`, `genres`, `cast`, `directors`, `created_at`, `updated_at`
+
+**Why these keys/fields**
+
+- `_id` is the natural primary key for direct document lookup and for linking to Dgraph and ChromaDB.
+- `email` and `username` are the main login and uniqueness fields because authentication and sign-up checks need fast equality lookups.
+- `role`, `is_active`, `watchlist`, and `profiles` model user state without requiring extra joins.
+- `content_type`, `genres`, `cast`, and `directors` are queryable fields because the UI filters, search, and semantic index all need them.
+- `created_at` and `updated_at` support sorting, recent content views, and admin audit flows.
+
+**Where it is used**
+
+```python
+# backend/app/api/v1/endpoints/auth.py
+user = await db["users"].find_one({"email": credentials.email})
+
+new_user = {
+	"email": user_data.email,
+	"username": user_data.username,
+	"hashed_password": hashed_password,
+	"role": user_data.role.value,
+	"watchlist": [],
+	"profiles": [],
+}
+```
+
+```python
+# backend/app/api/v1/endpoints/content.py
+new_content = {
+	**content_data.model_dump(),
+	"content_type": content_data.content_type.value,
+	"release_date": content_data.release_date,
+	"created_at": datetime.utcnow(),
+	"updated_at": datetime.utcnow(),
+}
+```
+
+### Cassandra
+
+Cassandra stores high-volume event and history data.
+
+**Why Cassandra for this data**
+
+- Playback and watch events are append-heavy and grow quickly, so Cassandra handles that write volume better than a document store.
+- The app needs recent history by user and time-ordered lookups, which matches Cassandra's partition + clustering key model.
+- Event data is mostly read by user and recency, not by many ad hoc joins, so Cassandra is a good fit.
+
+**Keyspaces and tables**
+
+- Keyspace: `zeen_keyspace`
+- `playback_events`: `user_id`, `content_id`, `event_type`, `position_seconds`, `event_time`
+  - Primary key: `((user_id, content_id), event_time)`
+- `watch_history`: `user_id`, `watched_at`, `content_id`, `progress_seconds`, `duration_seconds`, `completed`
+  - Primary key: `(user_id, watched_at)`
+- `user_activity`: `activity_date`, `event_time`, `user_id`, `action`, `content_id`, `details`
+  - Primary key: `(activity_date, event_time)`
+
+**Why these keys**
+
+- `playback_events` uses `(user_id, content_id)` as the partition key because resume position and playback history are always queried per user and content pair.
+- `event_time` is the clustering key so the newest playback event appears first, which helps resume playback and recent event checks.
+- `watch_history` uses `user_id` as the partition key because history is primarily read per user.
+- `watched_at` is the clustering key because the UI and analytics need the most recent entries first.
+- `user_activity` uses `activity_date` as the partition key so daily analytics and admin summaries can scan one day at a time.
+- `event_time` as clustering key preserves chronological ordering within each day.
+
+**Where it is used**
+
+```python
+# backend/app/api/v1/endpoints/watch_history.py
+session.execute(
+	"INSERT INTO playback_events (user_id, content_id, event_type, position_seconds, event_time) "
+	"VALUES (%s, %s, %s, %s, %s)",
+	(current_user.id, content_id, event.event_type.value, event.position_seconds, now),
+)
+```
+
+```python
+# backend/app/api/v1/endpoints/watch_history.py
+session.execute(
+	"INSERT INTO watch_history (user_id, watched_at, content_id, progress_seconds, duration_seconds, completed) "
+	"VALUES (%s, %s, %s, %s, %s, %s)",
+	(current_user.id, now, content_id, event.position_seconds, duration, completed),
+)
+```
+
+```python
+# backend/app/api/v1/endpoints/watch_history.py
+session.execute(
+	"INSERT INTO user_activity (activity_date, event_time, user_id, action, content_id, details) "
+	"VALUES (%s, %s, %s, %s, %s, %s)",
+	(date_str, now, user_id, action, content_id, details),
+)
+```
+
+### Dgraph
+
+Dgraph stores graph relationships used for recommendations.
+
+**Why Dgraph for this data**
+
+- Recommendations depend on relationships between users, content, genres, actors, and directors, which is exactly what graph databases are built for.
+- Traversing shared interests is cheaper and simpler in a graph than in many relational joins.
+- The app needs edges like watched, saved, rated, and shared entities, and Dgraph naturally models those connections.
+
+**Predicates and node types**
+
+- User node fields: `user_id`, `username`, `email`
+- Content node fields: `content_id`, `title`
+- Shared entity nodes: `Genre.name`, `Actor.name`, `Director.name`
+- Edges: `watched`, `rated`, `saved`, `has_genre`, `has_actor`, `has_director`
+
+**Why these predicates/indexes**
+
+- `user_id` and `content_id` are indexed with `exact` so MongoDB IDs can be resolved directly and reliably.
+- `username` and `name` use `exact` and `term` because the app needs both exact matches and partial name lookups for graph entities.
+- `title` uses `exact`, `term`, and `fulltext` so the graph layer can support content lookup and text-oriented graph queries.
+- The edges (`watched`, `rated`, `saved`, `has_genre`, `has_actor`, `has_director`) are reverse-linked because recommendations need to traverse from a person or an entity back to related content.
+
+**Where it is used**
+
+```python
+# backend/app/core/dgraph_client.py
+async def create_user_node(mongo_id: str, username: str, email: str):
+	result = await _mutate({
+		"set": [{
+			"dgraph.type": "User",
+			"user_id": mongo_id,
+			"username": username,
+			"email": email,
+		}]
+	})
+```
+
+```python
+# backend/app/core/dgraph_client.py
+async def create_content_node(mongo_id: str, title: str, genres: list[str], cast: list[str], directors: list[str]):
+	content_obj = {
+		"dgraph.type": "Content",
+		"content_id": mongo_id,
+		"title": title,
+	}
+```
+
+```python
+# backend/app/api/v1/endpoints/watch_history.py
+if event.event_type.value == "play":
+	from app.core.dgraph_client import add_watched_edge
+	await add_watched_edge(current_user.id, content_id)
+```
+
+```python
+# backend/app/api/v1/endpoints/recommendations.py
+content_ids = await get_recommendations(current_user.id, limit)
+```
+
+### ChromaDB
+
+ChromaDB stores the semantic search index for content.
+
+**Why ChromaDB for this data**
+
+- Search queries are natural language, not only exact keywords, so embeddings are a better fit than pure text indexes.
+- Similarity search works well for queries like “movies about betrayal” or “shows with a detective vibe”, where the exact words may not appear in the title.
+- The content catalog is small enough that local embeddings are practical and avoid external API costs.
+
+**Collection and metadata fields**
+
+- Collection: `content_semantic_index`
+- Stored per item: `id`, `document`, `embedding`, `metadata`
+- Metadata fields: `title`, `content_type`, `genres`, `cast`, `directors`, `release_date`
+
+**Why these fields**
+
+- `id` is the MongoDB content ID so semantic results can be mapped back to the main document quickly.
+- `document` stores the canonical text used to generate the embedding.
+- `embedding` is the vector representation that enables similarity search.
+- `metadata` keeps the most useful filters next to the vector so the app can still reason about title, type, genres, cast, directors, and release date without reloading everything.
+- `title`, `content_type`, `genres`, `cast`, and `directors` are included because they are the same fields used by the UI filters and fallback lexical search.
+
+**Why the index/search approach**
+
+- The search helper stores one vector per content item and queries by nearest neighbors.
+- `min_similarity` filters weak matches so the app returns only the most relevant results.
+- Limiting the semantic search set keeps the result merge small and predictable, while MongoDB still does the final document fetch.
+
+**Where it is used**
+
+```python
+# backend/app/core/semantic_search.py
+collection.upsert(
+	ids=[content_id],
+	documents=[text],
+	embeddings=[embedding],
+	metadatas=[_build_metadata(content)],
+)
+```
+
+```python
+# backend/app/api/v1/endpoints/content.py
+semantic_ids = await semantic_search_content_ids(
+	normalized_query,
+	limit=chroma_limit,
+	min_similarity=min_similarity,
+)
+```
+
+```python
+# backend/app/core/semantic_search.py
+result = collection.query(query_embeddings=[embedding], n_results=limit)
+```
+
+## Current features
+
+- JWT-based registration and login
+- Profile view and logout
+- Admin content management
+- Content cards with a modern detail modal
+- Filtering by type and text query
+- Semantic search powered by local embeddings
+- Docker-based local development environment
+
+## Architecture
+
+### Backend
+
+- FastAPI 0.115.0
+- Motor for MongoDB access
+- Cassandra driver for event history
+- Pydgraph for graph relationships
+- ChromaDB for semantic search
+- Python 3.12
+
+### Frontend
+
+- React 19 with TypeScript
+- Vite
+- Zustand for state
+- Axios for API calls
+
+### Infrastructure
+
+- Docker and Docker Compose
+- MongoDB 8.0
+- Apache Cassandra 5.0
+- Dgraph Zero + Alpha
+- ChromaDB
+
+## Quick start
 
 ```bash
-git clone <repository-url> && cd Zeen
+git clone <repository-url>
+cd Zeen
 cp .env.example .env
 docker-compose up --build
 ```
 
 Then open:
-- **Frontend**: http://localhost:5173
-- **API Docs**: http://localhost:8000/api/v1/docs
 
-That's it! All 7 services (MongoDB, Cassandra, Dgraph Zero, Dgraph Alpha, ChromaDB, Backend, Frontend) will start automatically.
+- Frontend: http://localhost:5173
+- API docs: http://localhost:8000/api/v1/docs
 
----
+## Running locally
 
-## �🏗️ Architecture
-
-### Tech Stack
-
-**Backend:**
-- FastAPI 0.115.0 (Python web framework)
-- Motor 3.6.0 (async MongoDB driver)
-- Cassandra Driver 3.29.3
-- Pydgraph (Dgraph client)
-- ChromaDB 0.6.3 (Vector database)
-- Python 3.12
-
-**Frontend:**
-- React 19.0.0 with TypeScript 5.4.2
-- Vite 5.1.0 (build tool)
-- Zustand 4.5.0 (state management)
-- Axios (HTTP client)
-- Node.js 20-alpine
-
-**Infrastructure:**
-- Docker & Docker Compose
-- MongoDB 8.0
-- Apache Cassandra 5.0
-- Dgraph 25.3.2 (Zero + Alpha)
-- ChromaDB latest
-
-## 🚀 Getting Started
-
-### Prerequisites
-
-- **Docker Desktop** installed and running (includes Docker CLI and Docker Compose)
-- **Git** for cloning the repository
-
-*Optional for local development:*
-- **Node.js** 20+
-- **Python** 3.12+
-
-### Installation & Running
-
-#### Using Docker Compose (Recommended)
-
-```bash
-# 1. Clone the repository
-git clone <repository-url>
-cd Zeen
-
-# 2. Create environment file
-cp .env.example .env
-
-# 3. Start all services
-docker-compose up --build
-
-# 4. Wait for all services to be healthy
-# Watch the output until you see health messages
-```
-
-Once running, access:
-- **Web App**: http://localhost:5173
-- **API Docs**: http://localhost:8000/docs
-- **API ReDoc**: http://localhost:8000/redoc
-
-#### Verifying Services
-
-```bash
-# Check all containers are healthy
-docker-compose ps
-
-# View logs for a specific service
-docker-compose logs backend
-docker-compose logs frontend
-docker-compose logs mongodb
-```
-
-#### Stopping Services
-
-```bash
-# Stop all services (keeps data)
-docker-compose stop
-
-# Stop and remove containers and volumes (clean slate)
-docker-compose down -v
-```
-
-### Local Development (Without Docker)
-
-**Note**: Docker Compose approach is recommended. For local development:
-
-#### Backend
+### Backend
 
 ```bash
 cd backend
-
-# Create virtual environment
 python -m venv venv
-
-# Activate (Windows)
 venv\Scripts\activate
-
-# Activate (macOS/Linux)
-source venv/bin/activate
-
-# Install dependencies
 pip install -r requirements.txt
-
-# Start databases separately (requires Docker)
-docker-compose up mongodb cassandra dgraph-zero dgraph chromadb
-
-# Run FastAPI server
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-#### Frontend
+### Frontend
 
 ```bash
 cd frontend
-
-# Install dependencies
 npm install
-
-# Start Vite dev server
 npm run dev
-
-# Access at http://localhost:5173
 ```
 
-**Important**: Local development still requires Docker for databases. For a complete isolated experience, use `docker-compose up --build`.
+## Important environment variables
 
-## ⚙️ Configuration
+- `MONGODB_USER`, `MONGODB_PASSWORD` - MongoDB credentials
+- `CASSANDRA_HOSTS`, `CASSANDRA_PORT` - Cassandra connection settings
+- `DGRAPH_URL` - Dgraph endpoint
+- `CHROMADB_URL` - ChromaDB endpoint
+- `SECRET_KEY` - JWT signing key
+- `VITE_API_URL` - Frontend API base URL
 
-### Environment Variables
+## API endpoints
 
-The `.env` file controls all configuration. Key variables:
+- `POST /api/v1/auth/register` - Register a user
+- `POST /api/v1/auth/login` - Log in and get a token
+- `GET /api/v1/auth/me` - Get current user data
+- `GET /api/v1/content/` - List content with filters and query search
+- `GET /api/v1/content/{content_id}` - Get a single content item
+- `POST /api/v1/content/` - Create content as admin
+- `PUT /api/v1/content/{content_id}` - Update content as admin
+- `DELETE /api/v1/content/{content_id}` - Delete content as admin
 
-**Database Connections:**
-- `MONGODB_USER` / `MONGODB_PASSWORD` - MongoDB credentials
-- `CASSANDRA_HOSTS` / `CASSANDRA_PORT` - Cassandra connection
-- `DGRAPH_URL` - Dgraph server URL
-- `CHROMADB_URL` - ChromaDB server URL
+## Development notes
 
-**Security:**
-- `SECRET_KEY` - JWT signing key (change in production!)
-- `ALGORITHM` - JWT algorithm (HS256 recommended)
-- `ACCESS_TOKEN_EXPIRE_MINUTES` - Token validity period (default: 30)
+- `test_all_endpoints.sh` is the main smoke test script for API routes.
+- Keep user-facing copy in English unless the project explicitly needs another language.
+- The app uses local embeddings for ChromaDB, so semantic search works without external APIs.
 
-**API:**
-- `API_V1_STR` - API version prefix (default: /api/v1)
-- `PROJECT_NAME` - Application name
+## Project structure
 
-**Frontend:**
-- `VITE_API_URL` - Backend API URL for frontend (default: http://localhost:8000)
-
-### Default Credentials (Local Development)
-
-- **MongoDB**: `admin` / `password123`
-- **API JWT expires**: 30 minutes
-
-⚠️ **Important**: Change `SECRET_KEY` and database credentials in production!
-
-## 📚 API Endpoints
-
-### Authentication
-
-- `POST /api/v1/auth/register` - Register new user
-- `POST /api/v1/auth/login` - Login and get access token
-- `GET /api/v1/auth/me` - Get current user info
-
-### Users
-
-- `GET /api/v1/users/{user_id}` - Get user profile
-- `PUT /api/v1/users/{user_id}` - Update user profile
-
-### Content
-
-- `GET /api/v1/content/` - List content (with filters)
-- `GET /api/v1/content/{content_id}` - Get content details
-- `POST /api/v1/content/` - Create content (admin)
-- `PUT /api/v1/content/{content_id}` - Update content (admin)
-- `DELETE /api/v1/content/{content_id}` - Delete content (admin)
-
-## 🔐 Authentication
-
-The platform uses **JWT (JSON Web Tokens)** for authentication:
-
-1. User registers or logs in
-2. Server returns an access token
-3. Client includes token in `Authorization: Bearer <token>` header
-4. Token expires after 30 minutes (configurable)
-
-## 📊 Database Schema
-
-### MongoDB Collections
-
-**users**
-```javascript
-{
-  _id: ObjectId,
-  email: String,
-  username: String,
-  hashed_password: String,
-  first_name: String,
-  last_name: String,
-  is_active: Boolean,
-  created_at: DateTime,
-  updated_at: DateTime
-}
-```
-
-**content**
-```javascript
-{
-  _id: ObjectId,
-  title: String,
-  description: String,
-  content_type: "movie" | "series" | "episode",
-  duration_minutes: Number,
-  release_date: DateTime,
-  poster_url: String,
-  banner_url: String,
-  rating: Number,
-  genres: [String],
-  cast: [String],
-  directors: [String],
-  created_at: DateTime,
-  updated_at: DateTime
-}
-```
-
-### Cassandra Tables
-
-**watch_history**
-- For storing time-series data of user watch events
-- Partitioned by user_id for efficient queries
-- Supports high-throughput writes
-
-### Dgraph Predicates
-
-- User → watches → Content (relationships)
-- User → enjoys_genre → Genre
-- Content → features_actor → Actor
-- Content → made_by → Director
-
-### ChromaDB Collections
-
-- Vector embeddings of content descriptions
-- Enables semantic search across the catalog
-
-## 🔄 Project Structure
-
-```
+```text
 Zeen/
-├── docker-compose.yml           # Service orchestration
-├── .env.example                 # Environment template
-├── README.md                    # This file
 ├── backend/
 │   ├── app/
-│   │   ├── core/               # Config, security, database
-│   │   ├── models/             # Data models
-│   │   ├── schemas/            # Pydantic schemas
-│   │   ├── api/                # API routes
-│   │   └── main.py             # FastAPI app
+│   │   ├── api/
+│   │   ├── core/
+│   │   ├── models/
+│   │   ├── schemas/
+│   │   └── main.py
 │   ├── requirements.txt
 │   └── Dockerfile
-└── frontend/
-    ├── src/
-    │   ├── components/         # Reusable React components
-    │   ├── pages/             # Page components
-    │   ├── services/          # API service layer
-    │   ├── store/             # Zustand stores
-    │   ├── hooks/             # Custom React hooks
-    │   └── App.tsx            # Main app component
-    ├── package.json
-    ├── vite.config.ts
-    └── Dockerfile
+├── frontend/
+│   ├── src/
+│   │   ├── components/
+│   │   ├── pages/
+│   │   ├── services/
+│   │   ├── store/
+│   │   └── hooks/
+│   ├── package.json
+│   └── Dockerfile
+└── docker-compose.yml
 ```
 
-## 🧪 Testing
+## Troubleshooting
 
-```bash
-# Run backend tests
-cd backend
-pytest
+- If containers do not start, check ports 27017, 9042, 8080, 8000, and 5173.
+- Cassandra can take longer than the rest of the stack to become healthy.
+- If the frontend shows stale data, refresh the browser or restart the frontend container.
 
-# Run frontend tests
-cd frontend
-npm test
-```
+## Team
 
-## 📖 Development Guide
+- Diego A. Barraza C. - Lead Developer
+- Diego Romo M. - Backend Architecture
+- Juan P. Gutierrez G. - Frontend Development
 
-### Adding a New API Endpoint
+ITESO - Universidad Jesuita de Guadalajara
 
-1. Create a Pydantic schema in `app/schemas/`
-2. Create endpoint file in `app/api/v1/endpoints/`
-3. Include router in `app/api/v1/api.py`
-4. Test with `/api/v1/docs`
-
-### Creating database models
-
-Models are Python classes that represent database documents.
-
-```python
-# In app/models/
-class MyModel:
-    def __init__(self, field1, field2):
-        self.field1 = field1
-        self.field2 = field2
-    
-    def to_dict(self):
-        return {"field1": self.field1, "field2": self.field2}
-```
-
-## 🐛 Troubleshooting
-
-### Services won't start
-
-Check all required ports (27017, 9042, 8080, 8000, 5173) are available:
-
-```bash
-# Check container status
-docker-compose ps
-
-# View detailed logs
-docker-compose logs -f backend
-```
-
-### MongoDB connection timeout
-
-Ensure MongoDB has time to initialize (can take 10-15 seconds):
-
-```bash
-docker-compose logs mongodb
-# Should see "Waiting for connections" message
-```
-
-### Frontend shows 404 error
-
-1. Verify frontend container is running: `docker ps | grep frontend`
-2. Check frontend logs: `docker-compose logs frontend`
-3. Clear browser cache and reload: `Ctrl+Shift+R` (or `Cmd+Shift+R` on Mac)
-
-### Backend API unreachable
-
-1. Verify backend is healthy: `docker-compose ps` (should show "healthy")
-2. Test endpoint directly: `curl http://localhost:8000/health`
-3. Check logs: `docker-compose logs backend`
-
-### Port conflicts
-
-If ports are already in use:
-
-```bash
-# Option 1: Stop all Docker containers
-docker stop $(docker ps -q)
-
-# Option 2: Use different ports (edit docker-compose.yml)
-# Change "8000:8000" to "8001:8000" for example
-```
-
-### Database data persists after `docker-compose down -v`
-
-The `-v` flag removes volumes. To ensure clean state:
-
-```bash
-docker-compose down -v
-docker system prune -f
-```
-
-### Cassandra is slow to become healthy
-
-Cassandra can take 30-60 seconds to fully initialize. Be patient with initial startup.
-
-## 🚀 Production Deployment
-
-⚠️ **Before deploying to production:**
-
-1. Change `SECRET_KEY` to a strong random value
-2. Update database credentials
-3. Set `VITE_API_URL` to production domain
-4. Enable HTTPS/SSL
-5. Configure CORS for your domain
-6. Use managed database services (avoid container databases)
-7. Implement proper logging and monitoring
-
-## 📝 License
-
-MIT License - See LICENSE file for details
-
-## 👥 Contributing
-
-Contributions are welcome! Please:
-
-1. Create a feature branch
-2. Make your changes
-3. Test thoroughly
-4. Submit a pull request
-
-## 📞 Support
-
-For issues or questions, please open a GitHub issue.
-
-### CORS errors when calling API
-
-Verify `ALLOWED_ORIGINS` in `.env` includes your frontend URL.
-
-## 🤝 Contributing
-
-1. Create a feature branch (`git checkout -b feature/AmazingFeature`)
-2. Commit changes (`git commit -m 'Add AmazingFeature'`)
-3. Push to branch (`git push origin feature/AmazingFeature`)
-4. Open a Pull Request
-
-## 📄 License
-
-This project is under MIT License.
-
-## 👥 Team
-
-- **Diego A. Barraza C.** - Lead Developer
-- **Diego Romo M.** - Backend Architecture
-- **Juan P. Gutierrez G.** - Frontend Development
-
-**ITESO - Universidad Jesuita de Guadalajara**  
-Project Date: February 3, 2026
-
-## 📞 Support
-
-For issues, questions, or suggestions, please open an issue on GitHub.
-
----
-
-**Zeen** - See it. Feel it. Keep it Zeen 🎬
+Zeen - See it. Feel it. Keep it Zeen.

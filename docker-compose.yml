@@ -1,0 +1,164 @@
+services:
+  # MongoDB - Document store for user profiles, show metadata, episodes
+  mongodb:
+    image: mongo:8.0
+    container_name: zeen-mongodb
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: password123
+      MONGO_INITDB_DATABASE: zeen_db
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - zeen-network
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Cassandra - High-throughput time-series for watch history and events
+  cassandra:
+    image: cassandra:5.0
+    container_name: zeen-cassandra
+    ports:
+      - "9042:9042"
+    environment:
+      CASSANDRA_CLUSTER_NAME: "Zeen Cluster"
+      CASSANDRA_SEEDS: cassandra
+      CASSANDRA_NUM_TOKENS: 256
+      CASSANDRA_DC: dc1
+    volumes:
+      - cassandra_data:/var/lib/cassandra
+    networks:
+      - zeen-network
+    healthcheck:
+      test: ["CMD", "cqlsh", "-e", "describe cluster"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+  # Dgraph Zero - Cluster management and metadata
+  dgraph-zero:
+    image: dgraph/dgraph:latest
+    container_name: zeen-dgraph-zero
+    ports:
+      - "5080:5080"
+      - "6080:6080"
+    command: dgraph zero --my=dgraph-zero:5080 --logtostderr --v=2
+    volumes:
+      - dgraph_zero_data:/dgraph
+    networks:
+      - zeen-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Dgraph Alpha - Graph database for relationships (users, genres, actors)
+  dgraph:
+    image: dgraph/dgraph:latest
+    container_name: zeen-dgraph
+    ports:
+      - "8080:8080"
+      - "9080:9080"
+    command: dgraph alpha --my=dgraph:7080 --zero=dgraph-zero:5080 --logtostderr --v=2
+    volumes:
+      - dgraph_data:/dgraph
+    depends_on:
+      dgraph-zero:
+        condition: service_healthy
+    networks:
+      - zeen-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ChromaDB - Vector database for semantic search
+  chromadb:
+    image: ghcr.io/chroma-core/chroma:0.6.3
+    container_name: zeen-chromadb
+    ports:
+      - "8001:8000"
+    volumes:
+      - chromadb_data:/chroma/data
+    networks:
+      - zeen-network
+    environment:
+      IS_PERSISTENT: "true"
+      ALLOW_RESET: "true"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/" , "||", "exit", "0"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # FastAPI Backend
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: zeen-backend
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=mongodb://admin:password123@mongodb:27017/zeen_db?authSource=admin
+      - CASSANDRA_HOSTS=["cassandra"]
+      - CASSANDRA_PORT=9042
+      - DGRAPH_URL=http://dgraph:8080
+      - CHROMADB_URL=http://chromadb:8000
+      - SECRET_KEY=${SECRET_KEY:-your-secret-key-change-in-production}
+      - ALGORITHM=HS256
+      - ACCESS_TOKEN_EXPIRE_MINUTES=30
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      cassandra:
+        condition: service_healthy
+      dgraph:
+        condition: service_healthy
+      chromadb:
+        condition: service_started
+    networks:
+      - zeen-network
+    volumes:
+      - ./backend:/app
+    restart: unless-stopped
+
+  # React Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: zeen-frontend
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_URL=http://localhost:8000
+    depends_on:
+      backend:
+        condition: service_started
+    networks:
+      - zeen-network
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    restart: unless-stopped
+
+volumes:
+  mongodb_data:
+  cassandra_data:
+  dgraph_zero_data:
+  dgraph_data:
+  chromadb_data:
+
+networks:
+  zeen-network:
+    driver: bridge
